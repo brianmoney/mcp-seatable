@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { getEnv } from '../config/env.js'
 import { ListRowsResponse, SeaTableRow, SeaTableTable } from './types.js'
 import { logAxiosError } from './utils.js'
+import { TokenManager } from './tokenManager.js'
 
 const ListRowsQuerySchema = z.object({
     table: z.string(),
@@ -23,13 +24,26 @@ export class SeaTableClient {
 
     constructor() {
         const env = getEnv()
+        const tm = new TokenManager({
+            serverUrl: env.SEATABLE_SERVER_URL,
+            apiToken: env.SEATABLE_API_TOKEN,
+            baseUuid: env.SEATABLE_BASE_UUID,
+            timeoutMs: Number(env.HTTP_TIMEOUT_MS ?? 20000),
+        })
         this.http = axios.create({
             baseURL: `${env.SEATABLE_SERVER_URL}/dtable-server/api/v1/dtables/${env.SEATABLE_BASE_UUID}`,
-            timeout: Number(env.HTTP_TIMEOUT_MS ?? 15000),
+            timeout: Number(env.HTTP_TIMEOUT_MS ?? 20000),
             headers: {
-                Authorization: `Token ${env.SEATABLE_API_TOKEN}`,
                 'Content-Type': 'application/json',
             },
+        })
+
+        // Inject fresh base token per request
+        this.http.interceptors.request.use(async (config) => {
+            const token = await tm.getToken()
+            config.headers = config.headers || {}
+                ; (config.headers as any).Authorization = `Token ${token}`
+            return config
         })
 
         axiosRetry(this.http, {
@@ -40,6 +54,26 @@ export class SeaTableClient {
                 return [408, 429, 500, 502, 503, 504].includes(status ?? 0)
             },
         })
+
+        // On 401, force refresh token once and retry
+        this.http.interceptors.response.use(
+            (r) => r,
+            async (error: AxiosError) => {
+                if (error.response?.status === 401) {
+                    try {
+                        await tm.forceRefresh()
+                        const cfg = error.config!
+                        const token = await tm.getToken()
+                        cfg.headers = cfg.headers || {}
+                            ; (cfg.headers as any).Authorization = `Token ${token}`
+                        return this.http.request(cfg)
+                    } catch (_) {
+                        // fall through to throw
+                    }
+                }
+                return Promise.reject(error)
+            }
+        )
     }
 
     async listTables(): Promise<SeaTableTable[]> {
@@ -48,6 +82,16 @@ export class SeaTableClient {
             return res.data.tables as SeaTableTable[]
         } catch (error) {
             logAxiosError(error, 'listTables')
+            throw error
+        }
+    }
+
+    async getMetadata(): Promise<any> {
+        try {
+            const res = await this.http.get('/metadata')
+            return res.data
+        } catch (error) {
+            logAxiosError(error, 'getMetadata')
             throw error
         }
     }

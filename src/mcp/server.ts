@@ -11,6 +11,7 @@ import { registerListTables } from './tools/listTables.js'
 import { registerSearchRows } from './tools/searchRows.js'
 import { registerUpdateRow } from './tools/updateRow.js'
 import { registerPingSeatable } from './tools/pingSeatable.js'
+import { registerGetSchema } from './tools/getSchema.js'
 
 export function buildServer() {
     const env = getEnv()
@@ -26,6 +27,7 @@ export function buildServer() {
     registerDeleteRow(server, { client, env })
     registerSearchRows(server, { client, env })
     registerPingSeatable(server, { client, env })
+    registerGetSchema(server, { client, env })
 
     logger.info('MCP server built')
     return server
