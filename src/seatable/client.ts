@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosInstance } from 'axios'
 import axiosRetry from 'axios-retry'
+import Bottleneck from 'bottleneck'
 import { z } from 'zod'
 
 import { getEnv } from '../config/env.js'
@@ -21,6 +22,7 @@ export type ListRowsQuery = z.infer<typeof ListRowsQuerySchema>
 
 export class SeaTableClient {
     private readonly http: AxiosInstance
+    private readonly limiter: Bottleneck
 
     constructor() {
         const env = getEnv()
@@ -38,6 +40,9 @@ export class SeaTableClient {
             },
         })
 
+        // 5 RPS default (minTime ~ 200ms)
+        this.limiter = new Bottleneck({ minTime: 200 })
+
         // Inject fresh base token per request
         this.http.interceptors.request.use(async (config) => {
             const token = await tm.getToken()
@@ -48,7 +53,11 @@ export class SeaTableClient {
 
         axiosRetry(this.http, {
             retries: 3,
-            retryDelay: axiosRetry.exponentialDelay,
+            retryDelay: (retryCount, error) => {
+                const base = axiosRetry.exponentialDelay(retryCount)
+                const jitter = Math.floor(Math.random() * 250)
+                return base + jitter
+            },
             retryCondition: (error: AxiosError) => {
                 const status = error.response?.status
                 return [408, 429, 500, 502, 503, 504].includes(status ?? 0)
@@ -68,7 +77,9 @@ export class SeaTableClient {
                             ; (cfg.headers as any).Authorization = `Token ${token}`
                         return this.http.request(cfg)
                     } catch (_) {
-                        // fall through to throw
+                        const e: any = error
+                        e.code = 'ERR_AUTH_EXPIRED'
+                        return Promise.reject(e)
                     }
                 }
                 return Promise.reject(error)
@@ -78,8 +89,8 @@ export class SeaTableClient {
 
     async listTables(): Promise<SeaTableTable[]> {
         try {
-            const res = await this.http.get('/metadata/tables')
-            return res.data.tables as SeaTableTable[]
+            const res = await this.limiter.schedule(() => this.http.get('/metadata/tables'))
+            return (res as any).data.tables as SeaTableTable[]
         } catch (error) {
             logAxiosError(error, 'listTables')
             throw error
@@ -88,8 +99,8 @@ export class SeaTableClient {
 
     async getMetadata(): Promise<any> {
         try {
-            const res = await this.http.get('/metadata')
-            return res.data
+            const res = await this.limiter.schedule(() => this.http.get('/metadata'))
+            return (res as any).data
         } catch (error) {
             logAxiosError(error, 'getMetadata')
             throw error
@@ -99,8 +110,8 @@ export class SeaTableClient {
     async listRows(query: ListRowsQuery): Promise<ListRowsResponse> {
         const parsed = ListRowsQuerySchema.parse(query)
         try {
-            const res = await this.http.get('/rows/', { params: parsed })
-            return res.data as ListRowsResponse
+            const res = await this.limiter.schedule(() => this.http.get('/rows/', { params: parsed }))
+            return (res as any).data as ListRowsResponse
         } catch (error) {
             logAxiosError(error, 'listRows')
             throw error
@@ -109,8 +120,8 @@ export class SeaTableClient {
 
     async getRow(table: string, rowId: string): Promise<SeaTableRow> {
         try {
-            const res = await this.http.get(`/rows/${rowId}`, { params: { table } })
-            return res.data as SeaTableRow
+            const res = await this.limiter.schedule(() => this.http.get(`/rows/${rowId}`, { params: { table } }))
+            return (res as any).data as SeaTableRow
         } catch (error) {
             logAxiosError(error, 'getRow')
             throw error
@@ -119,8 +130,8 @@ export class SeaTableClient {
 
     async addRow(table: string, row: Record<string, unknown>): Promise<SeaTableRow> {
         try {
-            const res = await this.http.post('/rows/', { table, row })
-            return res.data as SeaTableRow
+            const res = await this.limiter.schedule(() => this.http.post('/rows/', { table, row }))
+            return (res as any).data as SeaTableRow
         } catch (error) {
             logAxiosError(error, 'addRow')
             throw error
@@ -129,8 +140,8 @@ export class SeaTableClient {
 
     async updateRow(table: string, rowId: string, row: Record<string, unknown>): Promise<SeaTableRow> {
         try {
-            const res = await this.http.put(`/rows/${rowId}`, { table, row })
-            return res.data as SeaTableRow
+            const res = await this.limiter.schedule(() => this.http.put(`/rows/${rowId}`, { table, row }))
+            return (res as any).data as SeaTableRow
         } catch (error) {
             logAxiosError(error, 'updateRow')
             throw error
@@ -139,7 +150,7 @@ export class SeaTableClient {
 
     async deleteRow(table: string, rowId: string): Promise<{ success: boolean }> {
         try {
-            await this.http.delete(`/rows/${rowId}`, { data: { table } })
+            await this.limiter.schedule(() => this.http.delete(`/rows/${rowId}`, { data: { table } }))
             return { success: true }
         } catch (error) {
             logAxiosError(error, 'deleteRow')
@@ -149,8 +160,8 @@ export class SeaTableClient {
 
     async searchRows(table: string, query: Record<string, unknown>): Promise<ListRowsResponse> {
         try {
-            const res = await this.http.post('/rows/filter', { table, filter: query })
-            return res.data as ListRowsResponse
+            const res = await this.limiter.schedule(() => this.http.post('/rows/filter', { table, filter: query }))
+            return (res as any).data as ListRowsResponse
         } catch (error) {
             logAxiosError(error, 'searchRows')
             throw error

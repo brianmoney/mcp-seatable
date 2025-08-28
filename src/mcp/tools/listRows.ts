@@ -26,7 +26,7 @@ const InputShape = {
 
 export const registerListRows: ToolRegistrar = (server, { client, env }) => {
     server.registerTool(
-        'listRows',
+        'list_rows',
         {
             title: 'List Rows',
             description: 'List rows from a table with pagination and filters',

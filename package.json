@@ -27,6 +27,7 @@
     "@modelcontextprotocol/sdk": "^1.17.4",
     "axios": "^1.7.7",
     "axios-retry": "^4.5.0",
+    "bottleneck": "^2.19.5",
     "dotenv": "^16.4.5",
     "pino": "^9.4.0",
     "zod": "^3.23.8"
@@ -42,7 +43,7 @@
     "prettier": "^3.3.3",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",
-    "vitest": "^2.1.1",
-    "typescript-eslint": "^8.5.0"
+    "typescript-eslint": "^8.5.0",
+    "vitest": "^2.1.1"
   }
 }

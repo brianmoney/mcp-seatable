@@ -4,14 +4,16 @@ import { getEnv } from '../config/env.js'
 import { logger } from '../logger.js'
 import { SeaTableClient } from '../seatable/client.js'
 import { registerAddRow } from './tools/addRow.js'
-import { registerDeleteRow } from './tools/deleteRow.js'
+import { registerDeleteRows } from './tools/deleteRow.js'
 import { registerGetRow } from './tools/getRow.js'
 import { registerListRows } from './tools/listRows.js'
 import { registerListTables } from './tools/listTables.js'
 import { registerSearchRows } from './tools/searchRows.js'
-import { registerUpdateRow } from './tools/updateRow.js'
+import { registerUpdateRows } from './tools/updateRow.js'
 import { registerPingSeatable } from './tools/pingSeatable.js'
 import { registerGetSchema } from './tools/getSchema.js'
+import { registerAppendRows } from './tools/appendRows.js'
+import { registerUpsertRows } from './tools/upsertRows.js'
 
 export function buildServer() {
     const env = getEnv()
@@ -23,8 +25,10 @@ export function buildServer() {
     registerListRows(server, { client, env })
     registerGetRow(server, { client, env })
     registerAddRow(server, { client, env })
-    registerUpdateRow(server, { client, env })
-    registerDeleteRow(server, { client, env })
+    registerAppendRows(server, { client, env })
+    registerUpdateRows(server, { client, env })
+    registerDeleteRows(server, { client, env })
+    registerUpsertRows(server, { client, env })
     registerSearchRows(server, { client, env })
     registerPingSeatable(server, { client, env })
     registerGetSchema(server, { client, env })

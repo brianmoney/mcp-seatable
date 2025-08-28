@@ -9,7 +9,7 @@ const InputShape = {
 
 export const registerGetRow: ToolRegistrar = (server, { client }) => {
     server.registerTool(
-        'getRow',
+        'get_row',
         {
             title: 'Get Row',
             description: 'Get a row by ID from a table',
