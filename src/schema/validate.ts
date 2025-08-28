@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { makeError } from '../errors.js'
 import type { GenericSchema } from './generic.js'
 
 export const ValidateOptionsSchema = z.object({
@@ -16,7 +17,7 @@ export function validateRowsAgainstSchema(
     const options = ValidateOptionsSchema.parse({ allowCreateColumns: false, ...(opts || {}) })
     const table = schema.tables.find((t) => t.name === tableName)
     if (!table) {
-        throw new Error('ERR_SCHEMA_UNKNOWN_TABLE')
+        throw makeError('ERR_SCHEMA_UNKNOWN_TABLE', 'ERR_SCHEMA_UNKNOWN_TABLE', { tableName })
     }
     const allowed = new Set(table.columns.map((c) => c.name))
     const unknown = new Set<string>()
@@ -29,10 +30,10 @@ export function validateRowsAgainstSchema(
 
     const unknownColumns = Array.from(unknown)
     if (unknownColumns.length && !options.allowCreateColumns) {
-        const msg = `Unknown columns: ${unknownColumns.join(', ')}`
-        const err = new Error(msg)
-            ; (err as any).code = 'ERR_SCHEMA_UNKNOWN_COLUMN'
-        throw err
+        throw makeError('ERR_SCHEMA_UNKNOWN_COLUMN', `Unknown columns: ${unknownColumns.join(', ')}`, {
+            tableName,
+            unknownColumns,
+        })
     }
 
     return { rows, unknownColumns }

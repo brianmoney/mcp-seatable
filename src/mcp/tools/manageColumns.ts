@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
-import { ToolRegistrar } from './types.js'
 import { mapMetadataToGeneric } from '../../schema/map.js'
+import { ToolRegistrar } from './types.js'
 
 const Create = z.object({ name: z.string(), type: z.string(), options: z.record(z.any()).optional() })
 const Update = z.object({ name: z.string(), new_name: z.string().optional(), type: z.string().optional(), options: z.record(z.any()).optional() })

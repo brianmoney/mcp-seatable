@@ -14,6 +14,11 @@ const EnvSchema = z.object({
         .optional()
         .transform((v) => (v ? Number(v) : undefined))
         .pipe(z.number().int().positive().optional()),
+    SEATABLE_MOCK: z
+        .string()
+        .optional()
+        .transform((v) => (v === '1' || v === 'true' ? true : false))
+        .optional(),
 })
 
 export type Env = z.infer<typeof EnvSchema>

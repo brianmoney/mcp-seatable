@@ -1,8 +1,8 @@
 import { z } from 'zod'
 
-import { ToolRegistrar } from './types.js'
 import { mapMetadataToGeneric } from '../../schema/map.js'
 import { validateRowsAgainstSchema } from '../../schema/validate.js'
+import { ToolRegistrar } from './types.js'
 
 const UpdateItem = z.object({
     row_id: z.string(),

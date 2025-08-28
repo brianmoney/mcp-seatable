@@ -4,6 +4,7 @@ import Bottleneck from 'bottleneck'
 import { z } from 'zod'
 
 import { getEnv } from '../config/env.js'
+import { toCodedAxiosError } from '../errors.js'
 import { ListRowsResponse, SeaTableRow, SeaTableTable } from './types.js'
 import { logAxiosError } from './utils.js'
 import { TokenManager } from './tokenManager.js'
@@ -53,19 +54,26 @@ export class SeaTableClient {
         // 5 RPS default (minTime ~ 200ms)
         this.limiter = new Bottleneck({ minTime: 200 })
 
+        const addMeta = (config: any) => {
+            config.metadata = config.metadata || {}
+            config.metadata.requestId = config.metadata.requestId || Math.random().toString(36).slice(2)
+            config.metadata.startedAt = Date.now()
+            return config
+        }
+
         // Inject fresh base token per request (Token) for dtable-server
         this.http.interceptors.request.use(async (config) => {
             const token = await tm.getToken()
             config.headers = config.headers || {}
-                ; (config.headers as any).Authorization = `Token ${token}`
-            return config
+            ;(config.headers as any).Authorization = `Token ${token}`
+            return addMeta(config)
         })
         // Inject fresh base token per request (Bearer) for api-gateway
         this.gatewayHttp.interceptors.request.use(async (config) => {
             const token = await tm.getToken()
             config.headers = config.headers || {}
-                ; (config.headers as any).Authorization = `Bearer ${token}`
-            return config
+            ;(config.headers as any).Authorization = `Bearer ${token}`
+            return addMeta(config)
         })
 
         const retryConfig = {
@@ -96,9 +104,7 @@ export class SeaTableClient {
                         ; (cfg.headers as any).Authorization = `${isGateway ? 'Bearer' : 'Token'} ${token}`
                     return (isGateway ? this.gatewayHttp : this.http).request(cfg)
                 } catch (_) {
-                    const e: any = error
-                    e.code = 'ERR_AUTH_EXPIRED'
-                    return Promise.reject(e)
+                    return Promise.reject(toCodedAxiosError(error, 'auth'))
                 }
             }
             return Promise.reject(error)
@@ -116,7 +122,7 @@ export class SeaTableClient {
             return (res as any).data
         } catch (error) {
             logAxiosError(error, 'createTable')
-            throw error
+            throw toCodedAxiosError(error, 'createTable')
         }
     }
 
@@ -128,7 +134,7 @@ export class SeaTableClient {
             return (res as any).data
         } catch (error) {
             logAxiosError(error, 'renameTable')
-            throw error
+            throw toCodedAxiosError(error, 'renameTable')
         }
     }
 
@@ -138,7 +144,7 @@ export class SeaTableClient {
             return { success: true }
         } catch (error) {
             logAxiosError(error, 'deleteTable')
-            throw error
+            throw toCodedAxiosError(error, 'deleteTable')
         }
     }
 
@@ -151,7 +157,7 @@ export class SeaTableClient {
             return (res as any).data
         } catch (error) {
             logAxiosError(error, 'createColumn')
-            throw error
+            throw toCodedAxiosError(error, 'createColumn')
         }
     }
 
@@ -163,7 +169,7 @@ export class SeaTableClient {
             return (res as any).data
         } catch (error) {
             logAxiosError(error, 'updateColumn')
-            throw error
+            throw toCodedAxiosError(error, 'updateColumn')
         }
     }
 
@@ -175,7 +181,7 @@ export class SeaTableClient {
             return { success: true }
         } catch (error) {
             logAxiosError(error, 'deleteColumn')
-            throw error
+            throw toCodedAxiosError(error, 'deleteColumn')
         }
     }
 
@@ -186,7 +192,7 @@ export class SeaTableClient {
             return (res as any).data.tables as SeaTableTable[]
         } catch (error) {
             logAxiosError(error, 'listTables')
-            throw error
+            throw toCodedAxiosError(error, 'listTables')
         }
     }
 
@@ -196,7 +202,7 @@ export class SeaTableClient {
             return (res as any).data
         } catch (error) {
             logAxiosError(error, 'getMetadata')
-            throw error
+            throw toCodedAxiosError(error, 'getMetadata')
         }
     }
 
@@ -207,7 +213,7 @@ export class SeaTableClient {
             return (res as any).data as ListRowsResponse
         } catch (error) {
             logAxiosError(error, 'listRows')
-            throw error
+            throw toCodedAxiosError(error, 'listRows')
         }
     }
 
@@ -217,7 +223,7 @@ export class SeaTableClient {
             return (res as any).data as SeaTableRow
         } catch (error) {
             logAxiosError(error, 'getRow')
-            throw error
+            throw toCodedAxiosError(error, 'getRow')
         }
     }
 
@@ -227,7 +233,7 @@ export class SeaTableClient {
             return (res as any).data as SeaTableRow
         } catch (error) {
             logAxiosError(error, 'addRow')
-            throw error
+            throw toCodedAxiosError(error, 'addRow')
         }
     }
 
@@ -237,7 +243,7 @@ export class SeaTableClient {
             return (res as any).data as SeaTableRow
         } catch (error) {
             logAxiosError(error, 'updateRow')
-            throw error
+            throw toCodedAxiosError(error, 'updateRow')
         }
     }
 
@@ -247,7 +253,7 @@ export class SeaTableClient {
             return { success: true }
         } catch (error) {
             logAxiosError(error, 'deleteRow')
-            throw error
+            throw toCodedAxiosError(error, 'deleteRow')
         }
     }
 
@@ -257,7 +263,7 @@ export class SeaTableClient {
             return (res as any).data as ListRowsResponse
         } catch (error) {
             logAxiosError(error, 'searchRows')
-            throw error
+            throw toCodedAxiosError(error, 'searchRows')
         }
     }
 }

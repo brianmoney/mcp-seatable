@@ -1,8 +1,9 @@
 import { z } from 'zod'
 
-import { ToolRegistrar } from './types.js'
+import { makeError } from '../../errors.js'
 import { mapMetadataToGeneric } from '../../schema/map.js'
 import { validateRowsAgainstSchema } from '../../schema/validate.js'
+import { ToolRegistrar } from './types.js'
 
 const InputShape = {
     table: z.string(),
@@ -38,9 +39,7 @@ export const registerUpsertRows: ToolRegistrar = (server, { client }) => {
                 // Ensure all key columns present
                 for (const k of key_columns) {
                     if (!(k in row)) {
-                        const err = new Error(`Missing key column in row: ${k}`)
-                            ; (err as any).code = 'ERR_UPSERT_MISSING_KEY'
-                        throw err
+                        throw makeError('ERR_UPSERT_MISSING_KEY', `Missing key column in row: ${k}`, { key: k })
                     }
                 }
 
@@ -52,9 +51,7 @@ export const registerUpsertRows: ToolRegistrar = (server, { client }) => {
                 const matches = found.rows || []
 
                 if (matches.length > 1) {
-                    const err = new Error('Multiple matches for upsert key')
-                        ; (err as any).code = 'ERR_UPSERT_AMBIGUOUS'
-                    throw err
+                    throw makeError('ERR_UPSERT_AMBIGUOUS', 'Multiple matches for upsert key', { key_columns, filter })
                 }
 
                 if (matches.length === 1) {

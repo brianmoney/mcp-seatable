@@ -1,4 +1,5 @@
 import { z } from 'zod'
+
 import { ToolRegistrar } from './types.js'
 
 const Column = z.object({ name: z.string(), type: z.string(), options: z.record(z.any()).optional() })

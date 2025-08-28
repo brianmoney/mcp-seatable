@@ -1,5 +1,5 @@
-import { ToolRegistrar } from './types.js'
 import { mapMetadataToGeneric } from '../../schema/map.js'
+import { ToolRegistrar } from './types.js'
 
 export const registerGetSchema: ToolRegistrar = (server, { client }) => {
     server.registerTool(
