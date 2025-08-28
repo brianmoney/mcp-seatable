@@ -17,6 +17,13 @@ const InputShape = {
 
 const Input = z.object(InputShape)
 
+function inferTypeFromValues(values: any[]): string {
+    // Prefer checkbox for booleans, number for numbers, else text
+    if (values.some((v) => typeof v === 'boolean')) return 'checkbox'
+    if (values.some((v) => typeof v === 'number')) return 'number'
+    return 'text'
+}
+
 export const registerUpdateRows: ToolRegistrar = (server, { client }) => {
     server.registerTool(
         'update_rows',
@@ -29,18 +36,28 @@ export const registerUpdateRows: ToolRegistrar = (server, { client }) => {
             const { table, updates, allow_create_columns } = Input.parse(args)
             const metadata = await client.getMetadata()
             const generic = mapMetadataToGeneric(metadata)
-            // Validate against schema
-            validateRowsAgainstSchema(
+            // Validate against schema and capture unknowns
+            const { unknownColumns } = validateRowsAgainstSchema(
                 generic,
                 table,
                 updates.map((u) => u.values),
                 { allowCreateColumns: allow_create_columns ?? false }
             )
 
+            if (allow_create_columns && unknownColumns.length) {
+                // Infer simple types per unknown column from provided values across updates
+                for (const col of unknownColumns) {
+                    const sampleVals = updates.map((u) => u.values[col]).filter((v) => v !== undefined)
+                    const inferred = inferTypeFromValues(sampleVals)
+                    await client.createColumn(table, { column_name: col, column_type: inferred })
+                }
+            }
+
             const results = [] as any[]
             for (const u of updates) {
-                const updated = await client.updateRow(table, u.row_id, u.values)
-                results.push(updated)
+                await client.updateRow(table, u.row_id, u.values)
+                const fresh = await client.getRow(table, u.row_id)
+                results.push(fresh)
             }
             return { content: [{ type: 'text', text: JSON.stringify({ rows: results }) }] }
         }

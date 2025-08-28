@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll } from 'vitest'
+import { describe, expect, it, beforeAll, vi } from 'vitest'
 
 beforeAll(() => {
     process.env.SEATABLE_SERVER_URL = 'http://localhost'
@@ -13,5 +13,20 @@ describe('SeaTableClient', () => {
     it('constructs', () => {
         const client = new SeaTableClient()
         expect(client).toBeTruthy()
+    })
+
+    it('uses a Base-Token (Bearer) for all surfaces', async () => {
+        const { TokenManager } = await import('../src/seatable/tokenManager')
+        const spy = vi.spyOn(TokenManager.prototype as any, 'getToken').mockResolvedValue('base-token')
+
+        const client = new SeaTableClient() as any
+        const mkErr = async (p: Promise<any>) => p.catch((e: any) => e)
+        const e1 = await mkErr(client.http.get('/metadata'))
+        const e2 = await mkErr(client.gatewayHttp.get('/tables/'))
+        const e3 = await mkErr(client.externalHttp.get('/metadata'))
+        expect(spy).toHaveBeenCalled()
+        expect(e1?.config?.headers?.Authorization).toBe('Bearer base-token')
+        expect(e2?.config?.headers?.Authorization).toBe('Bearer base-token')
+        expect(e3?.config?.headers?.Authorization).toBe('Bearer base-token')
     })
 })

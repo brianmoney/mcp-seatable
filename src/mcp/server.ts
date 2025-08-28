@@ -18,6 +18,8 @@ import { registerPingSeatable } from './tools/pingSeatable.js'
 import { registerUnlinkRows } from './tools/unlinkRows.js'
 import { registerUpdateRows } from './tools/updateRow.js'
 import { registerUpsertRows } from './tools/upsertRows.js'
+import { registerFindRows } from './tools/findRows.js'
+import { registerBulkSetSelectOptions } from './tools/bulkSetSelectOptions.js'
 
 export function buildServer() {
     const env = getEnv()
@@ -39,6 +41,8 @@ export function buildServer() {
     registerAttachFileToRow(server, { client, env })
     registerPingSeatable(server, { client, env })
     registerGetSchema(server, { client, env })
+    registerFindRows(server, { client, env })
+    registerBulkSetSelectOptions(server, { client, env })
 
     logger.info('MCP server built')
     return server
