@@ -22,6 +22,7 @@ export type ListRowsQuery = z.infer<typeof ListRowsQuerySchema>
 
 export class SeaTableClient {
     private readonly http: AxiosInstance
+    private readonly gatewayHttp: AxiosInstance
     private readonly limiter: Bottleneck
 
     constructor() {
@@ -40,20 +41,36 @@ export class SeaTableClient {
             },
         })
 
+        // API-Gateway v2 for management endpoints (tables, columns, files)
+        this.gatewayHttp = axios.create({
+            baseURL: `${env.SEATABLE_SERVER_URL}/api-gateway/api/v2/dtables/${env.SEATABLE_BASE_UUID}`,
+            timeout: Number(env.HTTP_TIMEOUT_MS ?? 20000),
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        })
+
         // 5 RPS default (minTime ~ 200ms)
         this.limiter = new Bottleneck({ minTime: 200 })
 
-        // Inject fresh base token per request
+        // Inject fresh base token per request (Token) for dtable-server
         this.http.interceptors.request.use(async (config) => {
             const token = await tm.getToken()
             config.headers = config.headers || {}
                 ; (config.headers as any).Authorization = `Token ${token}`
             return config
         })
+        // Inject fresh base token per request (Bearer) for api-gateway
+        this.gatewayHttp.interceptors.request.use(async (config) => {
+            const token = await tm.getToken()
+            config.headers = config.headers || {}
+                ; (config.headers as any).Authorization = `Bearer ${token}`
+            return config
+        })
 
-        axiosRetry(this.http, {
+        const retryConfig = {
             retries: 3,
-            retryDelay: (retryCount, error) => {
+            retryDelay: (retryCount: number) => {
                 const base = axiosRetry.exponentialDelay(retryCount)
                 const jitter = Math.floor(Math.random() * 250)
                 return base + jitter
@@ -62,31 +79,107 @@ export class SeaTableClient {
                 const status = error.response?.status
                 return [408, 429, 500, 502, 503, 504].includes(status ?? 0)
             },
-        })
+        }
+        axiosRetry(this.http, retryConfig)
+        axiosRetry(this.gatewayHttp, retryConfig)
 
         // On 401, force refresh token once and retry
-        this.http.interceptors.response.use(
-            (r) => r,
-            async (error: AxiosError) => {
-                if (error.response?.status === 401) {
-                    try {
-                        await tm.forceRefresh()
-                        const cfg = error.config!
-                        const token = await tm.getToken()
-                        cfg.headers = cfg.headers || {}
-                            ; (cfg.headers as any).Authorization = `Token ${token}`
-                        return this.http.request(cfg)
-                    } catch (_) {
-                        const e: any = error
-                        e.code = 'ERR_AUTH_EXPIRED'
-                        return Promise.reject(e)
-                    }
+        const onAuthError = async (error: AxiosError) => {
+            if (error.response?.status === 401) {
+                try {
+                    await tm.forceRefresh()
+                    const cfg = error.config!
+                    const token = await tm.getToken()
+                    cfg.headers = cfg.headers || {}
+                    // Decide header based on which instance
+                    const isGateway = (cfg.baseURL || '').includes('/api-gateway/')
+                        ; (cfg.headers as any).Authorization = `${isGateway ? 'Bearer' : 'Token'} ${token}`
+                    return (isGateway ? this.gatewayHttp : this.http).request(cfg)
+                } catch (_) {
+                    const e: any = error
+                    e.code = 'ERR_AUTH_EXPIRED'
+                    return Promise.reject(e)
                 }
-                return Promise.reject(error)
             }
-        )
+            return Promise.reject(error)
+        }
+        this.http.interceptors.response.use((r) => r, onAuthError)
+        this.gatewayHttp.interceptors.response.use((r) => r, onAuthError)
     }
 
+    // --- Tables ---
+    async createTable(tableName: string, columns?: Array<Record<string, unknown>>): Promise<{ name: string }> {
+        try {
+            const res = await this.limiter.schedule(() =>
+                this.gatewayHttp.post('/tables/', { table_name: tableName, columns })
+            )
+            return (res as any).data
+        } catch (error) {
+            logAxiosError(error, 'createTable')
+            throw error
+        }
+    }
+
+    async renameTable(from: string, to: string): Promise<{ name: string }> {
+        try {
+            const res = await this.limiter.schedule(() =>
+                this.gatewayHttp.put('/tables/', { table_name: from, new_table_name: to })
+            )
+            return (res as any).data
+        } catch (error) {
+            logAxiosError(error, 'renameTable')
+            throw error
+        }
+    }
+
+    async deleteTable(name: string): Promise<{ success: boolean }> {
+        try {
+            await this.limiter.schedule(() => this.gatewayHttp.delete('/tables/', { data: { table_name: name } }))
+            return { success: true }
+        } catch (error) {
+            logAxiosError(error, 'deleteTable')
+            throw error
+        }
+    }
+
+    // --- Columns (API-Gateway v2) ---
+    async createColumn(table: string, column: Record<string, unknown>) {
+        try {
+            const res = await this.limiter.schedule(() =>
+                this.gatewayHttp.post('/columns/', { table_name: table, ...column })
+            )
+            return (res as any).data
+        } catch (error) {
+            logAxiosError(error, 'createColumn')
+            throw error
+        }
+    }
+
+    async updateColumn(table: string, columnName: string, patch: Record<string, unknown>) {
+        try {
+            const res = await this.limiter.schedule(() =>
+                this.gatewayHttp.put('/columns/', { table_name: table, column_name: columnName, ...patch })
+            )
+            return (res as any).data
+        } catch (error) {
+            logAxiosError(error, 'updateColumn')
+            throw error
+        }
+    }
+
+    async deleteColumn(table: string, columnName: string) {
+        try {
+            await this.limiter.schedule(() =>
+                this.gatewayHttp.delete('/columns/', { data: { table_name: table, column_name: columnName } })
+            )
+            return { success: true }
+        } catch (error) {
+            logAxiosError(error, 'deleteColumn')
+            throw error
+        }
+    }
+
+    // --- Existing dtable-server row APIs ---
     async listTables(): Promise<SeaTableTable[]> {
         try {
             const res = await this.limiter.schedule(() => this.http.get('/metadata/tables'))

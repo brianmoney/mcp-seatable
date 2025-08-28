@@ -48,7 +48,7 @@ export const registerUpsertRows: ToolRegistrar = (server, { client }) => {
                 const filter: Record<string, unknown> = {}
                 for (const k of key_columns) filter[k] = row[k]
 
-                const found = await client.searchRows(table, filter)
+                const found = await client.listRows({ table, filter, page: 1, page_size: 2 })
                 const matches = found.rows || []
 
                 if (matches.length > 1) {
