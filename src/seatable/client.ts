@@ -277,7 +277,7 @@ export class SeaTableClient {
     }
 
     async updateColumn(table: string, columnName: string, patch: Record<string, unknown>) {
-        const base = { table_name: table, column_name: columnName }
+        const base = { table_name: table, column_name: columnName, column: columnName }
         const candidates: Record<string, unknown>[] = []
 
         // Normalize a few common shapes for select options updates
@@ -288,27 +288,29 @@ export class SeaTableClient {
 
         if (hasOptionsTopLevel) {
             const options = (patch as any).options
+            // Prefer non-type-changing ops first
+            candidates.push({ ...base, op_type: 'set_column_data', data: { options } })
             candidates.push({ ...base, op_type: 'set_column_options', data: { options } })
             candidates.push({ ...base, op_type: 'set_options', data: { options } })
-            candidates.push({ ...base, op_type: 'set_column_data', data: options })
-            candidates.push({ ...base, op_type: 'set_column_data', data: { options } })
             candidates.push({ ...base, op_type: 'modify', data: { options } })
             candidates.push({ ...base, op_type: 'update_column', data: { options } })
-            // legacy alias 'choices'
+            // Some variants seen in older deployments
+            candidates.push({ ...base, op_type: 'set_column_data', data: options })
             candidates.push({ ...base, op_type: 'modify', data: { choices: options?.options ?? options } })
         }
 
         if (hasData) {
             const data = (patch as any).data
+            candidates.push({ ...base, op_type: 'set_column_data', data })
             candidates.push({ ...base, op_type: 'set_column_options', data })
             candidates.push({ ...base, op_type: 'set_options', data })
-            candidates.push({ ...base, op_type: 'set_column_data', data })
             candidates.push({ ...base, op_type: 'modify', data })
             candidates.push({ ...base, op_type: 'update_column', data })
         }
 
         if (hasColumnType) {
             const column_type = (patch as any).column_type
+            candidates.push({ ...base, op_type: 'modify_column_type', new_column_type: column_type })
             candidates.push({ ...base, op_type: 'set_column_type', column_type })
             candidates.push({ ...base, op_type: 'modify', column_type })
             candidates.push({ ...base, op_type: 'update_column', column_type })
@@ -316,6 +318,7 @@ export class SeaTableClient {
 
         if (hasNewName) {
             const new_column_name = (patch as any).new_column_name
+            candidates.push({ ...base, op_type: 'rename_column', new_column_name })
             candidates.push({ ...base, op_type: 'rename', new_column_name })
             candidates.push({ ...base, op_type: 'modify', new_column_name })
             candidates.push({ ...base, op_type: 'update_column', new_column_name })
@@ -335,16 +338,18 @@ export class SeaTableClient {
                     lastErr = e
                     const err = e as AxiosError
                     const status = err.response?.status
-                    const msg = typeof err.response?.data === 'string' ? err.response?.data : (err.response?.data as any)?.message
-                    if (status === 400 && /op_type invalid/i.test(String(msg))) {
-                        // try next candidate
-                        continue
+                    const data: any = err.response?.data
+                    const msg = typeof data === 'string' ? data : data?.message || data?.error_message
+                    // Continue trying candidates on common 400 parameter issues
+                    if (status === 400) {
+                        // Allow retry on op_type problems or parameter errors
+                        if (/op_type invalid|op_type required|invalid op_type/i.test(String(msg))) continue
+                        if (data?.error_type === 'parameter_error') continue
+                        if (/new_column_type\s+invalid|required/i.test(String(msg))) continue
                     }
-                    // non-op_type error: rethrow to handle fallback logic
                     throw e
                 }
             }
-            // exhausted candidates; throw last error
             throw lastErr
         }
 
@@ -369,6 +374,40 @@ export class SeaTableClient {
             }
             logAxiosError(error, 'updateColumn')
             throw toCodedAxiosError(error, 'updateColumn')
+        }
+    }
+
+    async deleteColumn(table: string, columnName: string) {
+        try {
+            await this.limiter.schedule(() =>
+                this.gatewayHttp.delete('/columns/', { data: { table_name: table, column: columnName, column_name: columnName } })
+            )
+            return { success: true }
+        } catch (error) {
+            if (this.shouldFallback(error)) {
+                try {
+                    await this.limiter.schedule(() =>
+                        this.http.delete('/columns/', { data: { table_name: table, column_name: columnName } })
+                    )
+                    return { success: true }
+                } catch (err2) {
+                    if (this.shouldFallback(err2)) {
+                        try {
+                            await this.limiter.schedule(() =>
+                                this.externalHttp.delete('/columns/', { data: { table_name: table, column_name: columnName } })
+                            )
+                            return { success: true }
+                        } catch (err3) {
+                            logAxiosError(err3, 'deleteColumn')
+                            throw toCodedAxiosError(err3, 'deleteColumn')
+                        }
+                    }
+                    logAxiosError(err2, 'deleteColumn')
+                    throw toCodedAxiosError(err2, 'deleteColumn')
+                }
+            }
+            logAxiosError(error, 'deleteColumn')
+            throw toCodedAxiosError(error, 'deleteColumn')
         }
     }
 
@@ -499,19 +538,31 @@ export class SeaTableClient {
     }
 
     async addRow(table: string, row: Record<string, unknown>): Promise<SeaTableRow> {
-        const body = { table_name: table, row }
+        const bodyV1V21 = { table_name: table, row }
+        const bodyGw = { table_name: table, rows: [row] }
         try {
-            const res = await this.limiter.schedule(() => this.gatewayHttp.post('/rows/', body))
-            return (res as any).data as SeaTableRow
+            // Use API-Gateway append rows endpoint
+            const res = await this.limiter.schedule(() => this.gatewayHttp.post('/rows/', bodyGw))
+            const data: any = (res as any).data
+            // Common shapes: { rows: [...] } or { row_ids: [...] } or { inserted_row_ids: [...] }
+            const firstRow = data?.rows?.[0]
+            if (firstRow) return firstRow as SeaTableRow
+            const rowId = (data?.row_ids?.[0] || data?.inserted_row_ids?.[0]) as string | undefined
+            if (rowId) {
+                // Fetch created row for normalized return
+                return await this.getRow(table, rowId)
+            }
+            // Fallback: return the input row (id may be missing)
+            return { ...(row as any) }
         } catch (error) {
             if (this.shouldFallback(error)) {
                 try {
-                    const res = await this.limiter.schedule(() => this.externalHttp.post('/rows/', body))
+                    const res = await this.limiter.schedule(() => this.externalHttp.post('/rows/', bodyV1V21))
                     return (res as any).data as SeaTableRow
                 } catch (err2) {
                     if (this.shouldFallback(err2)) {
                         try {
-                            const res = await this.limiter.schedule(() => this.http.post('/rows/', body))
+                            const res = await this.limiter.schedule(() => this.http.post('/rows/', bodyV1V21))
                             return (res as any).data as SeaTableRow
                         } catch (err3) {
                             logAxiosError(err3, 'addRow')
